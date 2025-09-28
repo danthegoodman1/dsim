@@ -12,12 +12,20 @@ use crate::message_bus::{Envelope, Message};
 /// - No async runtime (need to talk to the internet, or a DB? Kick out to another subscriber)
 /// - No random number generation (unless you seed it with the start message)
 /// - Never care about the tick interval, always operate from time deltas
+///
+/// ## Tips
+///
+/// The [MessageBus] runs all subscriber ticks and receives in a single thread for
+/// each loop. If you need to do something CPU or IO heavy:
+/// - Accept the envelopes
+/// - Send them to another thread or async runtime, and return from [Subscriber::receive] immediately
+/// - On the next [Subscriber::tick] or [Subscriber::receive], return any envelopes that are ready to be delivered to another subscriber
+///
+/// For example, if you have an io_uring [Subscriber], on [Subscriber::receive] you would enqueue the IO operation,
+/// have a background thread polling for completions, and on [Subscriber::tick] or [Subscriber::receive] you would return any envelopes
+/// destined back to the caller.
 pub trait Subscriber: Send + 'static {
-    fn receive(
-        &mut self,
-        msg: Box<dyn Message>,
-        at: std::time::SystemTime,
-    ) -> Vec<Envelope>;
+    fn receive(&mut self, msg: Box<dyn Message>, at: std::time::SystemTime) -> Vec<Envelope>;
     fn tick(&mut self, at: std::time::SystemTime) -> Vec<Envelope>;
 }
 
@@ -143,7 +151,10 @@ impl MessageBus {
         }
 
         // Wake the worker if it's blocked on recv_timeout by publishing a nop
-        let _ = self.msg_tx.send(Envelope { message: Box::new(NopEnvelope), destination: "".to_string() });
+        let _ = self.msg_tx.send(Envelope {
+            message: Box::new(NopEnvelope),
+            destination: "".to_string(),
+        });
 
         // Join the worker thread if present
         if let Some(handle) = self.handle.take() {
