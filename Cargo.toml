@@ -1,6 +1,6 @@
 [package]
 name = "dsim"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 repository = "https://github.com/danthegoodman1/dsim"
 license = "MIT"
@@ -8,3 +8,6 @@ description = "A deterministic simulation testing framework for Rust"
 
 [dependencies]
 flume = "0.11.1"
+
+[dev-dependencies]
+maplit = "1.0.2"
