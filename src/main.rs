@@ -96,7 +96,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simulator() {
+    fn test_simulator_step_by() {
         let ping_pong_1 = PingPong::new(
             std::time::Duration::from_millis(1000),
             "ping_pong_2",
@@ -119,5 +119,29 @@ mod tests {
         for _ in 0..50 {
             simulator.step(std::time::Duration::from_millis(100));
         }
+    }
+
+    #[test]
+    fn test_simulator_step_to() {
+        let ping_pong_1 = PingPong::new(
+            std::time::Duration::from_millis(1000),
+            "ping_pong_2",
+            "ping_pong_1",
+        );
+        let ping_pong_2 = PingPong::new(
+            std::time::Duration::from_millis(1000),
+            "ping_pong_1",
+            "ping_pong_2",
+        );
+        let mut simulator = Simulator::new(
+            maplit::hashmap! {
+                "ping_pong_1".to_string() => Box::new(ping_pong_1) as Box<dyn Subscriber>,
+                "ping_pong_2".to_string() => Box::new(ping_pong_2) as Box<dyn Subscriber>,
+            },
+            UNIX_EPOCH,
+            vec![],
+        );
+
+        simulator.step_to(UNIX_EPOCH + std::time::Duration::from_secs(5), std::time::Duration::from_millis(100));
     }
 }
