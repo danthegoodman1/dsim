@@ -11,13 +11,14 @@ use crate::message_bus::{Envelope, Message};
 /// - No internal sleeping (wait until `tick()` when `at` has passed)
 /// - No async runtime (need to talk to the internet, or a DB? Kick out to another subscriber)
 /// - No random number generation (unless you seed it with the start message)
+/// - Never care about the tick interval, always operate from time deltas
 pub trait Subscriber: Send + 'static {
     fn receive(
         &mut self,
         msg: Box<dyn Message>,
-        at: std::time::Instant,
+        at: std::time::SystemTime,
     ) -> Vec<Envelope>;
-    fn tick(&mut self, at: std::time::Instant) -> Vec<Envelope>;
+    fn tick(&mut self, at: std::time::SystemTime) -> Vec<Envelope>;
 }
 
 /// Internal no-op envelope used to wake the receiver during shutdown
@@ -80,7 +81,7 @@ impl MessageBus {
         shutdown: Arc<AtomicBool>,
     ) {
         println!("Processing messages");
-        let start_time = std::time::Instant::now();
+        let start_time = std::time::SystemTime::now();
         let mut next_tick = start_time + tick_interval;
 
         // Handle initial tick
@@ -97,9 +98,9 @@ impl MessageBus {
                 break;
             }
             // If we've passed the scheduled tick time, catch up (handle multiple if needed)
-            let now = std::time::Instant::now();
+            let now = std::time::SystemTime::now();
             if now >= next_tick {
-                while next_tick <= std::time::Instant::now() {
+                while next_tick <= std::time::SystemTime::now() {
                     let at = next_tick;
                     for (name, subscriber) in subscribers.iter_mut() {
                         println!("Ticking {}", name);
@@ -113,13 +114,14 @@ impl MessageBus {
                 continue;
             }
 
-            let timeout = next_tick.saturating_duration_since(now);
+            let timeout = next_tick.duration_since(now).unwrap_or(tick_interval); // if time moves backwards, we set to the default duration
+            // TODO: warn log if time moves backwards or takes too long
             match rx.recv_timeout(timeout) {
                 Ok(envelope) => {
                     let Some(subscriber) = subscribers.get_mut(&envelope.destination) else {
                         continue;
                     };
-                    let at = std::time::Instant::now();
+                    let at = std::time::SystemTime::now();
                     let envelopes = subscriber.receive(envelope.message, at);
                     for envelope in envelopes {
                         tx.send(envelope).unwrap();

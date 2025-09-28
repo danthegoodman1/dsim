@@ -5,11 +5,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use dsim::message_bus::{Message, MessageBus, Simulator, Subscriber};
-    use std::{collections::VecDeque, time};
+    use std::{
+        collections::VecDeque,
+        time::{self, UNIX_EPOCH},
+    };
 
     /// PingPong will emit a ping every tick, and respond with a pong.
     struct PingPong {
-        pings: VecDeque<std::time::Instant>,
+        pings: VecDeque<std::time::SystemTime>,
         ping_hold_time: std::time::Duration,
         destination: String,
         name: String,
@@ -30,7 +33,7 @@ mod tests {
         fn receive(
             &mut self,
             msg: Box<dyn Message>,
-            at: std::time::Instant,
+            at: std::time::SystemTime,
         ) -> Vec<dsim::message_bus::Envelope> {
             if let Some(_) = msg.downcast_ref::<Ping>() {
                 self.pings.push_back(at);
@@ -43,13 +46,13 @@ mod tests {
             vec![]
         }
 
-        fn tick(&mut self, at: std::time::Instant) -> Vec<dsim::message_bus::Envelope> {
+        fn tick(&mut self, at: std::time::SystemTime) -> Vec<dsim::message_bus::Envelope> {
             let mut out: Vec<dsim::message_bus::Envelope> = vec![dsim::message_bus::Envelope {
                 message: Box::new(Ping {}),
                 destination: self.destination.clone(),
             }];
             while let Some(&oldest) = self.pings.front() {
-                if at.duration_since(oldest) >= self.ping_hold_time {
+                if at.duration_since(oldest).unwrap() >= self.ping_hold_time {
                     self.pings.pop_front();
                     println!("{} sending pong to {}", self.name, self.destination);
                     out.push(dsim::message_bus::Envelope {
@@ -104,56 +107,17 @@ mod tests {
             "ping_pong_1",
             "ping_pong_2",
         );
-        let simulator = Simulator::new(
+        let mut simulator = Simulator::new(
             maplit::hashmap! {
                 "ping_pong_1".to_string() => Box::new(ping_pong_1) as Box<dyn Subscriber>,
                 "ping_pong_2".to_string() => Box::new(ping_pong_2) as Box<dyn Subscriber>,
             },
-            {
-                let start = std::time::Instant::now();
-                vec![
-                    // initial tick at start
-                    dsim::message_bus::SimulatorEvent::Tick(start),
-                    // deliver a Ping to ping_pong_1 shortly after start
-                    dsim::message_bus::SimulatorEvent::Envelope(
-                        dsim::message_bus::Envelope {
-                            message: Box::new(Ping {}),
-                            destination: "ping_pong_1".to_string(),
-                        },
-                        start + std::time::Duration::from_millis(100),
-                    ),
-                    // tick after 1.1s so ping_pong_1 can process held ping
-                    dsim::message_bus::SimulatorEvent::Tick(
-                        start + std::time::Duration::from_millis(1100),
-                    ),
-                    // deliver a Pong to ping_pong_2
-                    dsim::message_bus::SimulatorEvent::Envelope(
-                        dsim::message_bus::Envelope {
-                            message: Box::new(Pong {}),
-                            destination: "ping_pong_2".to_string(),
-                        },
-                        start + std::time::Duration::from_millis(1200),
-                    ),
-                    // another tick later
-                    dsim::message_bus::SimulatorEvent::Tick(
-                        start + std::time::Duration::from_millis(2000),
-                    ),
-                    // deliver another Ping to ping_pong_2
-                    dsim::message_bus::SimulatorEvent::Envelope(
-                        dsim::message_bus::Envelope {
-                            message: Box::new(Ping {}),
-                            destination: "ping_pong_2".to_string(),
-                        },
-                        start + std::time::Duration::from_millis(2100),
-                    ),
-                    // final tick
-                    dsim::message_bus::SimulatorEvent::Tick(
-                        start + std::time::Duration::from_millis(3000),
-                    ),
-                ]
-            },
+            UNIX_EPOCH,
+            vec![],
         );
 
-        simulator.run();
+        for _ in 0..50 {
+            simulator.step(std::time::Duration::from_millis(100));
+        }
     }
 }
