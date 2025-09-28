@@ -114,7 +114,7 @@ impl MessageBus {
                 continue;
             }
 
-            let timeout = next_tick.duration_since(now).unwrap_or(tick_interval); // if time moves backwards, we set to the default duration
+            let timeout = next_tick.duration_since(now).unwrap_or(tick_interval); // if time moves backwards, or we don't make the next tick, we set to the default duration
             // TODO: warn log if time moves backwards or takes too long
             match rx.recv_timeout(timeout) {
                 Ok(envelope) => {
