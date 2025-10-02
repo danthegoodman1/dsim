@@ -16,15 +16,17 @@ mod tests {
         ping_hold_time: std::time::Duration,
         destination: String,
         name: String,
+        priority: usize,
     }
 
     impl PingPong {
-        pub fn new(ping_hold_time: std::time::Duration, destination: &str, name: &str) -> Self {
+        pub fn new(ping_hold_time: std::time::Duration, destination: &str, name: &str, priority: usize) -> Self {
             Self {
                 pings: VecDeque::new(),
                 ping_hold_time,
                 destination: destination.to_string(),
                 name: name.to_string(),
+                priority,
             }
         }
     }
@@ -50,6 +52,7 @@ mod tests {
             let mut out: Vec<dsim::message_bus::Envelope> = vec![dsim::message_bus::Envelope {
                 message: Box::new(Ping {}),
                 destination: self.destination.clone(),
+                priority: self.priority,
             }];
             while let Some(&oldest) = self.pings.front() {
                 if at.duration_since(oldest).unwrap() >= self.ping_hold_time {
@@ -58,6 +61,7 @@ mod tests {
                     out.push(dsim::message_bus::Envelope {
                         message: Box::new(Pong {}),
                         destination: self.destination.clone(),
+                        priority: self.priority,
                     });
                 } else {
                     break;
@@ -77,16 +81,18 @@ mod tests {
 
     #[test]
     fn test_message_bus() {
-        let mut message_bus = MessageBus::new(std::time::Duration::from_millis(500));
+        let mut message_bus = MessageBus::new(std::time::Duration::from_millis(500), 2);
         let ping_pong_1 = PingPong::new(
             std::time::Duration::from_millis(1000),
             "ping_pong_2",
             "ping_pong_1",
+            0,
         );
         let ping_pong_2 = PingPong::new(
             std::time::Duration::from_millis(1000),
             "ping_pong_1",
             "ping_pong_2",
+            1, // normally, ping_pong_2 would log the recv first, but this forces
         );
         message_bus.subscribe("ping_pong_1".to_string(), Box::new(ping_pong_1));
         message_bus.subscribe("ping_pong_2".to_string(), Box::new(ping_pong_2));
@@ -101,11 +107,13 @@ mod tests {
             std::time::Duration::from_millis(1000),
             "ping_pong_2",
             "ping_pong_1",
+            0,
         );
         let ping_pong_2 = PingPong::new(
             std::time::Duration::from_millis(1000),
             "ping_pong_1",
             "ping_pong_2",
+            1,
         );
         let mut simulator = Simulator::new(
             maplit::hashmap! {
@@ -113,7 +121,7 @@ mod tests {
                 "ping_pong_2".to_string() => Box::new(ping_pong_2) as Box<dyn Subscriber>,
             },
             UNIX_EPOCH,
-            vec![],
+            vec![vec![], vec![]], // Create 2 priority queues
         );
 
         for _ in 0..50 {
@@ -127,11 +135,13 @@ mod tests {
             std::time::Duration::from_millis(1000),
             "ping_pong_2",
             "ping_pong_1",
+            1,
         );
         let ping_pong_2 = PingPong::new(
             std::time::Duration::from_millis(1000),
             "ping_pong_1",
             "ping_pong_2",
+            0,
         );
         let mut simulator = Simulator::new(
             maplit::hashmap! {
@@ -139,7 +149,7 @@ mod tests {
                 "ping_pong_2".to_string() => Box::new(ping_pong_2) as Box<dyn Subscriber>,
             },
             UNIX_EPOCH,
-            vec![],
+            vec![vec![], vec![]], // Create 2 priority queues
         );
 
         simulator.step_to(UNIX_EPOCH + std::time::Duration::from_secs(5), std::time::Duration::from_millis(100));

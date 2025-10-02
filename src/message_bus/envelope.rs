@@ -2,6 +2,7 @@ use std::any::Any;
 
 pub struct Envelope {
   pub message: Box<dyn Message>,
+  pub priority: usize,
   pub destination: String,
 }
 
