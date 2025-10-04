@@ -5,7 +5,7 @@ use std::sync::{
 };
 use std::thread;
 
-use crate::message_bus::{Envelope, Message};
+use crate::message_bus::{Envelope, Message, PublishHook, NoOpHook};
 
 /// A subscriber must **always** follow these rules to remain deterministic:
 /// - No internal sleeping (wait until `tick()` when `at` has passed)
@@ -34,16 +34,17 @@ struct NopEnvelope;
 
 impl Message for NopEnvelope {}
 
-pub struct MessageBus {
+pub struct MessageBus<H: PublishHook = NoOpHook> {
     subscribers: HashMap<String, Box<dyn Subscriber>>,
     msg_rxs: Option<Vec<flume::Receiver<Envelope>>>,
     msg_txs: Vec<flume::Sender<Envelope>>,
     tick_interval: std::time::Duration,
     shutdown: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+    hook: Option<H>,
 }
 
-impl MessageBus {
+impl MessageBus<NoOpHook> {
     /// Creates a new MessageBus with the given tick interval and number of queues.
     ///
     /// By default, you must have at least one queue. If you pass 0, it will default to 1.
@@ -54,6 +55,21 @@ impl MessageBus {
     /// If an [Envelope] is sent with a priority higher than the available queue index, it will fall
     /// down to the highest priority queue.
     pub fn new(tick_interval: std::time::Duration, queues: usize) -> Self {
+        Self::with_hook(tick_interval, queues, NoOpHook)
+    }
+}
+
+impl<H: PublishHook> MessageBus<H> {
+    /// Creates a new MessageBus with the given tick interval, number of queues, and publish hook.
+    ///
+    /// By default, you must have at least one queue. If you pass 0, it will default to 1.
+    ///
+    /// The queue priority is in increasing order, so the [0] queue has the lowest priority,
+    /// and the [queues - 1] queue has the highest priority.
+    ///
+    /// If an [Envelope] is sent with a priority higher than the available queue index, it will fall
+    /// down to the highest priority queue.
+    pub fn with_hook(tick_interval: std::time::Duration, queues: usize, hook: H) -> Self {
         let mut queues = queues;
         if queues == 0 {
             queues = 1;
@@ -67,6 +83,7 @@ impl MessageBus {
             tick_interval,
             shutdown: Arc::new(AtomicBool::new(false)),
             handle: None,
+            hook: Some(hook),
         }
     }
 
@@ -78,9 +95,10 @@ impl MessageBus {
         let tick_interval = self.tick_interval;
         let shutdown = self.shutdown.clone();
         let subscribers = std::mem::take(&mut self.subscribers);
+        let hook = self.hook.take().expect("MessageBus already started");
 
         let handle = thread::spawn(move || {
-            Self::process_messages(rx, tx, subscribers, tick_interval, shutdown);
+            Self::process_messages(rx, tx, subscribers, tick_interval, shutdown, hook);
         });
 
         self.handle = Some(handle);
@@ -102,6 +120,7 @@ impl MessageBus {
         mut subscribers: HashMap<String, Box<dyn Subscriber>>,
         tick_interval: std::time::Duration,
         shutdown: Arc<AtomicBool>,
+        hook: H,
     ) {
         println!("Processing messages");
         let start_time = std::time::SystemTime::now();
@@ -111,6 +130,7 @@ impl MessageBus {
         for subscriber in subscribers.values_mut() {
             let envelopes = subscriber.tick(start_time);
             for envelope in envelopes {
+                hook.on_publish(&envelope, start_time);
                 let priority = envelope.priority.min(txs.len() - 1);
                 txs[priority].send(envelope).unwrap();
             }
@@ -130,6 +150,7 @@ impl MessageBus {
                         println!("Ticking {}", name);
                         let envelopes = subscriber.tick(at);
                         for envelope in envelopes {
+                            hook.on_publish(&envelope, at);
                             let priority = envelope.priority.min(txs.len() - 1);
                             txs[priority].send(envelope).unwrap();
                         }
@@ -173,6 +194,7 @@ impl MessageBus {
                 let at = std::time::SystemTime::now();
                 let envelopes = subscriber.receive(envelope.message, at);
                 for envelope in envelopes {
+                    hook.on_publish(&envelope, at);
                     let priority = envelope.priority.min(txs.len() - 1);
                     txs[priority].send(envelope).unwrap();
                 }
@@ -200,7 +222,7 @@ impl MessageBus {
     }
 }
 
-impl Drop for MessageBus {
+impl<H: PublishHook> Drop for MessageBus<H> {
     fn drop(&mut self) {
         self.stop();
     }

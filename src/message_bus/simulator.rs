@@ -1,19 +1,20 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::message_bus::{Envelope, Subscriber};
+use crate::message_bus::{Envelope, Subscriber, PublishHook, NoOpHook};
 
 pub enum SimulatorEvent {
     Envelope(Envelope, std::time::SystemTime),
     Tick(std::time::SystemTime),
 }
 
-pub struct Simulator {
+pub struct Simulator<H: PublishHook = NoOpHook> {
     subscribers: HashMap<String, Box<dyn Subscriber>>,
     events: Vec<VecDeque<SimulatorEvent>>,
     time: std::time::SystemTime,
+    hook: H,
 }
 
-impl Simulator {
+impl Simulator<NoOpHook> {
     /// Creates a new simulator with the given subscribers, initial time, and initial events.
     ///
     /// The number of queues is determined by the length of the initial_events vector,
@@ -23,6 +24,22 @@ impl Simulator {
         subscribers: HashMap<String, Box<dyn Subscriber>>,
         initial_time: std::time::SystemTime,
         initial_events: Vec<Vec<SimulatorEvent>>,
+    ) -> Self {
+        Self::with_hook(subscribers, initial_time, initial_events, NoOpHook)
+    }
+}
+
+impl<H: PublishHook> Simulator<H> {
+    /// Creates a new simulator with the given subscribers, initial time, initial events, and publish hook.
+    ///
+    /// The number of queues is determined by the length of the initial_events vector,
+    /// and this must match the number of queues in a [crate::message_bus::MessageBus] to accurately simulate
+    /// the message bus.
+    pub fn with_hook(
+        subscribers: HashMap<String, Box<dyn Subscriber>>,
+        initial_time: std::time::SystemTime,
+        initial_events: Vec<Vec<SimulatorEvent>>,
+        hook: H,
     ) -> Self {
         let mut events: Vec<VecDeque<SimulatorEvent>> = initial_events
             .into_iter()
@@ -36,6 +53,7 @@ impl Simulator {
             subscribers,
             events,
             time: initial_time,
+            hook,
         }
     }
 
@@ -54,6 +72,7 @@ impl Simulator {
         for subscriber in subscribers.values_mut() {
             let envelopes = subscriber.tick(self.time);
             for envelope in envelopes {
+                self.hook.on_publish(&envelope, self.time);
                 let priority = envelope.priority.min(num_queues - 1);
                 new_events[priority].push_back(SimulatorEvent::Envelope(envelope, self.time));
             }
@@ -71,6 +90,7 @@ impl Simulator {
                         let envelopes = subscriber.receive(envelope.message, at);
                         // Add any new envelopes to the appropriate priority queue
                         for envelope in envelopes {
+                            self.hook.on_publish(&envelope, at);
                             let priority = envelope.priority.min(num_queues - 1);
                             new_events[priority].push_back(SimulatorEvent::Envelope(envelope, at));
                         }
@@ -80,6 +100,7 @@ impl Simulator {
                             let envelopes = subscriber.tick(at);
                             // Add any new envelopes to the appropriate priority queue
                             for envelope in envelopes {
+                                self.hook.on_publish(&envelope, at);
                                 let priority = envelope.priority.min(num_queues - 1);
                                 new_events[priority]
                                     .push_back(SimulatorEvent::Envelope(envelope, at));

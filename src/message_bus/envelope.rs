@@ -32,3 +32,18 @@ impl dyn Message {
         }
     }
 }
+
+/// A hook that is called whenever an envelope is published.
+/// Useful for recording messages for replay, logging, or debugging.
+pub trait PublishHook: Send + 'static {
+    fn on_publish(&self, envelope: &Envelope, at: std::time::SystemTime);
+}
+
+/// A no-op hook that does nothing when envelopes are published.
+/// The compiler will inline and eliminate all calls to this hook.
+pub struct NoOpHook;
+
+impl PublishHook for NoOpHook {
+    #[inline(always)]
+    fn on_publish(&self, _envelope: &Envelope, _at: std::time::SystemTime) {}
+}
