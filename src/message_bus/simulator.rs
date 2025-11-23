@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::message_bus::{Envelope, Subscriber, PublishHook, NoOpHook};
+use crate::message_bus::{Envelope, NoOpHook, PublishHook, Subscriber};
 
 pub enum SimulatorEvent {
     Envelope(Envelope, std::time::SystemTime),
@@ -58,7 +58,7 @@ impl<H: PublishHook> Simulator<H> {
     }
 
     /// Steps the simluator by some duration, looping through all of the subscribers to
-    /// run their tick, then receive for anything in the queue.
+    /// process events from the queue, then run their tick.
     ///
     /// Returns the new time after the step.
     pub fn step(&mut self, step_by: std::time::Duration) -> std::time::SystemTime {
@@ -68,17 +68,7 @@ impl<H: PublishHook> Simulator<H> {
         let mut new_events: Vec<VecDeque<SimulatorEvent>> =
             (0..num_queues).map(|_| VecDeque::new()).collect();
 
-        // First we process all of the ticks
-        for subscriber in subscribers.values_mut() {
-            let envelopes = subscriber.tick(self.time);
-            for envelope in envelopes {
-                self.hook.on_publish(&envelope, self.time);
-                let priority = envelope.priority.min(num_queues - 1);
-                new_events[priority].push_back(SimulatorEvent::Envelope(envelope, self.time));
-            }
-        }
-
-        // Then we increment the time to simulate the passing of time
+        // First we increment the time to simulate the passing of time
         self.time += step_by;
 
         // Then we process all of the events in the queue, in decreasing priority order (highest first)
@@ -110,6 +100,17 @@ impl<H: PublishHook> Simulator<H> {
                 }
             }
         }
+
+        // Finally we process all of the ticks at the new time
+        for subscriber in subscribers.values_mut() {
+            let envelopes = subscriber.tick(self.time);
+            for envelope in envelopes {
+                self.hook.on_publish(&envelope, self.time);
+                let priority = envelope.priority.min(num_queues - 1);
+                new_events[priority].push_back(SimulatorEvent::Envelope(envelope, self.time));
+            }
+        }
+
         // Reset the events queue
         self.events = new_events;
         self.time
